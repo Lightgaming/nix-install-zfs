@@ -8,6 +8,7 @@ It replaces the old interactive shell flow with a safer TUI that helps reduce ac
 - guided one-by-one setup screens (not all fields on one page)
 - validation for partition sizes and passphrase input
 - explicit yes/no prompts for ZFS encryption and flakes enablement
+- ZFS tuning wizard with Recommended defaults or Advanced mode
 - guided prompts for system settings (hostname, timezone, keyboard layout)
 - guided prompts for account setup (user, user password, sudo access, root password)
 - guided prompts for optional components (NetworkManager, Git)
@@ -21,7 +22,7 @@ The installer performs the following high-level steps:
 1. runs preflight checks (root, Linux, UEFI, required tools)
 2. partitions the selected disk into EFI, swap, and ZFS root
 3. formats EFI/swap and enables swap
-4. creates encrypted ZFS pool `zroot` and datasets:
+4. creates ZFS pool `zroot` and datasets (encrypted or unencrypted based on your choice):
    - `zroot/root`
    - `zroot/nix`
    - `zroot/home`
@@ -31,6 +32,25 @@ The installer performs the following high-level steps:
 7. writes `/mnt/etc/nixos/zfs.nix`
 8. injects `./zfs.nix` into generated `configuration.nix`
 9. writes `./system-setup.nix` with your selected system/user/network/program options
+
+## ZFS configuration modes
+
+The wizard provides two ZFS setup modes:
+
+- Recommended defaults:
+   - `ashift=12`
+   - `redundancy=single`
+   - `compression=lz4`
+   - `primarycache=all`
+   - `autotrim=on`
+- Advanced mode:
+   - `ashift`: `9..16`
+   - `redundancy`: `single`, `mirror`, `raidz1`, `raidz2`, `raidz3`
+   - `compression`: `lz4`, `zstd`, `gzip`, `zle`, `on`, `off`
+   - `primarycache`: `all`, `metadata`, `none`
+   - `autotrim`: yes/no
+
+Note: current installer execution mode supports one target disk only, so only `redundancy=single` is executable right now. Other redundancy levels are shown and explained in Advanced mode, but require multi-disk pool support.
 
 ## Prerequisites
 
@@ -125,6 +145,7 @@ cargo run
 
 - Disk selection: `Up` / `Down`, `Enter`
 - Wizard steps: each page asks one value at a time (`Boot size`, `Swap size`, `Encryption`, `Passphrase`, `Flakes`)
+- ZFS pages include `Recommended vs Advanced` and, in advanced mode, `ashift`, `redundancy`, `compression`, `primarycache`, and `autotrim`
 - Additional guided pages configure hostname, timezone, keyboard layout, users, root password, network, and git
 - Value entry pages: typing, `Backspace`, `Enter` next, `Esc` back
 - Yes/No pages (encryption, flakes): arrow keys + `Enter`
