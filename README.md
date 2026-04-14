@@ -49,6 +49,12 @@ When launched with `nix run .`, the flake wrapper provides required runtime tool
 nix run .
 ```
 
+Or run directly from GitHub without cloning:
+
+```bash
+sudo nix run --extra-experimental-features nix-command --extra-experimental-features flakes --no-write-lock-file github:Lightgaming/nix-install-zfs
+```
+
 ### Run with Cargo (development)
 
 ```bash
