@@ -1,6 +1,13 @@
 {
   description = "NixOS Encrypted ZFS Auto-installer (Rust + Ratatui)";
 
+  nixConfig = {
+    extra-substituters = [ "https://saint.cachix.org" ];
+    extra-trusted-public-keys = [
+      "saint.cachix.org-1:eM94+vbFecwyko6KEWBI6EJrHpPriVb2WJSILAtv3l4="
+    ];
+  };
+
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     crane.url = "github:ipetkov/crane";
