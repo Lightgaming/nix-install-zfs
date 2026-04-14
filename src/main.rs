@@ -5,9 +5,13 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use anyhow::{anyhow, bail, Context, Result};
+use crossterm::cursor::MoveTo;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
-use crossterm::{execute, ExecutableCommand};
+use crossterm::terminal::{
+    disable_raw_mode, enable_raw_mode, Clear as TermClear, ClearType, EnterAlternateScreen,
+    LeaveAlternateScreen,
+};
+use crossterm::execute;
 use rand::Rng;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -71,6 +75,14 @@ fn run() -> Result<()> {
             println!("Target disk: {}", cfg.disk.path);
             println!("Boot size:   {}", cfg.boot_size);
             println!("Swap size:   {}", cfg.swap_size);
+            println!(
+                "Encryption:  {}",
+                if cfg.enable_encryption { "enabled" } else { "disabled" }
+            );
+            println!(
+                "Flakes:      {}",
+                if cfg.enable_flakes { "enabled" } else { "disabled" }
+            );
             println!();
             run_installer(&cfg)
         }
@@ -125,6 +137,8 @@ struct InstallConfig {
     boot_size: String,
     swap_size: String,
     passphrase: String,
+    enable_encryption: bool,
+    enable_flakes: bool,
 }
 
 enum FinalAction {
@@ -135,37 +149,14 @@ enum FinalAction {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum UiScreen {
     DiskSelect,
-    Form,
+    BootSize,
+    SwapSize,
+    EncryptionChoice,
+    Passphrase,
+    PassphraseConfirm,
+    FlakesChoice,
     ExistingConfirm,
     FinalConfirm,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum FormField {
-    Boot,
-    Swap,
-    Pass,
-    PassConfirm,
-}
-
-impl FormField {
-    fn next(self) -> Self {
-        match self {
-            FormField::Boot => FormField::Swap,
-            FormField::Swap => FormField::Pass,
-            FormField::Pass => FormField::PassConfirm,
-            FormField::PassConfirm => FormField::Boot,
-        }
-    }
-
-    fn prev(self) -> Self {
-        match self {
-            FormField::Boot => FormField::PassConfirm,
-            FormField::Swap => FormField::Boot,
-            FormField::Pass => FormField::Swap,
-            FormField::PassConfirm => FormField::Pass,
-        }
-    }
 }
 
 struct App {
@@ -173,12 +164,14 @@ struct App {
     selected_disk: usize,
     screen: UiScreen,
     list_state: ListState,
-    field: FormField,
     boot_size: String,
     swap_size: String,
+    enable_encryption: bool,
     passphrase: String,
     passphrase_confirm: String,
+    enable_flakes: bool,
     existing_found: bool,
+    choice_yes_selected: bool,
     existing_overwrite_selected: bool,
     final_proceed_selected: bool,
     warnings: Vec<String>,
@@ -194,12 +187,14 @@ impl App {
             selected_disk: 0,
             screen: UiScreen::DiskSelect,
             list_state,
-            field: FormField::Boot,
             boot_size: "1G".to_string(),
             swap_size: "8G".to_string(),
+            enable_encryption: true,
             passphrase: String::new(),
             passphrase_confirm: String::new(),
+            enable_flakes: true,
             existing_found: false,
+            choice_yes_selected: true,
             existing_overwrite_selected: true,
             final_proceed_selected: true,
             warnings: Vec::new(),
@@ -228,7 +223,12 @@ impl App {
     fn handle_key(&mut self, code: KeyCode) -> Result<Option<FinalAction>> {
         match self.screen {
             UiScreen::DiskSelect => self.handle_disk_key(code),
-            UiScreen::Form => self.handle_form_key(code),
+            UiScreen::BootSize => self.handle_boot_size_key(code),
+            UiScreen::SwapSize => self.handle_swap_size_key(code),
+            UiScreen::EncryptionChoice => self.handle_encryption_choice_key(code),
+            UiScreen::Passphrase => self.handle_passphrase_key(code),
+            UiScreen::PassphraseConfirm => self.handle_passphrase_confirm_key(code),
+            UiScreen::FlakesChoice => self.handle_flakes_choice_key(code),
             UiScreen::ExistingConfirm => self.handle_existing_key(code),
             UiScreen::FinalConfirm => self.handle_final_key(code),
         }
@@ -249,8 +249,8 @@ impl App {
             }
             KeyCode::Enter => {
                 self.list_state.select(Some(self.selected_disk));
-                self.screen = UiScreen::Form;
-                self.status = "Set partition sizes + passphrase. Tab to move fields, Enter to continue.".to_string();
+                self.screen = UiScreen::BootSize;
+                self.status = "Step 2/7: Set EFI boot partition size, then press Enter.".to_string();
             }
             _ => {}
         }
@@ -258,24 +258,164 @@ impl App {
         Ok(None)
     }
 
-    fn handle_form_key(&mut self, code: KeyCode) -> Result<Option<FinalAction>> {
+    fn handle_boot_size_key(&mut self, code: KeyCode) -> Result<Option<FinalAction>> {
         match code {
             KeyCode::Esc => {
                 self.screen = UiScreen::DiskSelect;
                 self.status = "Select installation disk with arrow keys, Enter to continue.".to_string();
             }
-            KeyCode::Tab | KeyCode::Down | KeyCode::Right => self.field = self.field.next(),
-            KeyCode::BackTab | KeyCode::Up | KeyCode::Left => self.field = self.field.prev(),
             KeyCode::Backspace => {
-                self.active_field_mut().pop();
+                self.boot_size.pop();
             }
             KeyCode::Char(c) => {
                 if !c.is_control() {
-                    self.active_field_mut().push(c);
+                    self.boot_size.push(c.to_ascii_uppercase());
                 }
             }
             KeyCode::Enter => {
-                self.validate_form()?;
+                if let Err(err) = validate_size_input(&self.boot_size, "Boot") {
+                    self.status = err.to_string();
+                } else {
+                    self.screen = UiScreen::SwapSize;
+                    self.status = "Step 3/7: Set swap partition size, then press Enter.".to_string();
+                }
+            }
+            _ => {}
+        }
+        Ok(None)
+    }
+
+    fn handle_swap_size_key(&mut self, code: KeyCode) -> Result<Option<FinalAction>> {
+        match code {
+            KeyCode::Esc => {
+                self.screen = UiScreen::BootSize;
+                self.status = "Step 2/7: Set EFI boot partition size, then press Enter.".to_string();
+            }
+            KeyCode::Backspace => {
+                self.swap_size.pop();
+            }
+            KeyCode::Char(c) => {
+                if !c.is_control() {
+                    self.swap_size.push(c.to_ascii_uppercase());
+                }
+            }
+            KeyCode::Enter => {
+                if let Err(err) = validate_size_input(&self.swap_size, "Swap") {
+                    self.status = err.to_string();
+                } else {
+                    self.choice_yes_selected = self.enable_encryption;
+                    self.screen = UiScreen::EncryptionChoice;
+                    self.status =
+                        "Step 4/7: Choose whether to enable ZFS encryption.".to_string();
+                }
+            }
+            _ => {}
+        }
+        Ok(None)
+    }
+
+    fn handle_encryption_choice_key(&mut self, code: KeyCode) -> Result<Option<FinalAction>> {
+        match code {
+            KeyCode::Esc => {
+                self.screen = UiScreen::SwapSize;
+                self.status = "Step 3/7: Set swap partition size, then press Enter.".to_string();
+            }
+            KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down | KeyCode::Tab => {
+                self.choice_yes_selected = !self.choice_yes_selected;
+            }
+            KeyCode::Enter => {
+                self.enable_encryption = self.choice_yes_selected;
+                if self.enable_encryption {
+                    self.passphrase.clear();
+                    self.passphrase_confirm.clear();
+                    self.screen = UiScreen::Passphrase;
+                    self.status = "Step 5/7: Enter encryption passphrase (min 8 chars).".to_string();
+                } else {
+                    self.choice_yes_selected = self.enable_flakes;
+                    self.screen = UiScreen::FlakesChoice;
+                    self.status = "Step 7/7: Choose whether to enable flakes by default.".to_string();
+                }
+            }
+            _ => {}
+        }
+        Ok(None)
+    }
+
+    fn handle_passphrase_key(&mut self, code: KeyCode) -> Result<Option<FinalAction>> {
+        match code {
+            KeyCode::Esc => {
+                self.choice_yes_selected = self.enable_encryption;
+                self.screen = UiScreen::EncryptionChoice;
+                self.status =
+                    "Step 4/7: Choose whether to enable ZFS encryption.".to_string();
+            }
+            KeyCode::Backspace => {
+                self.passphrase.pop();
+            }
+            KeyCode::Char(c) => {
+                if !c.is_control() {
+                    self.passphrase.push(c);
+                }
+            }
+            KeyCode::Enter => {
+                if self.passphrase.len() < 8 {
+                    self.status = "Passphrase must be at least 8 characters.".to_string();
+                } else {
+                    self.screen = UiScreen::PassphraseConfirm;
+                    self.status = "Step 6/7: Confirm encryption passphrase.".to_string();
+                }
+            }
+            _ => {}
+        }
+        Ok(None)
+    }
+
+    fn handle_passphrase_confirm_key(&mut self, code: KeyCode) -> Result<Option<FinalAction>> {
+        match code {
+            KeyCode::Esc => {
+                self.screen = UiScreen::Passphrase;
+                self.status = "Step 5/7: Enter encryption passphrase (min 8 chars).".to_string();
+            }
+            KeyCode::Backspace => {
+                self.passphrase_confirm.pop();
+            }
+            KeyCode::Char(c) => {
+                if !c.is_control() {
+                    self.passphrase_confirm.push(c);
+                }
+            }
+            KeyCode::Enter => {
+                if self.passphrase != self.passphrase_confirm {
+                    self.status = "Passphrase and confirmation do not match.".to_string();
+                } else {
+                    self.choice_yes_selected = self.enable_flakes;
+                    self.screen = UiScreen::FlakesChoice;
+                    self.status = "Step 7/7: Choose whether to enable flakes by default.".to_string();
+                }
+            }
+            _ => {}
+        }
+        Ok(None)
+    }
+
+    fn handle_flakes_choice_key(&mut self, code: KeyCode) -> Result<Option<FinalAction>> {
+        match code {
+            KeyCode::Esc => {
+                if self.enable_encryption {
+                    self.screen = UiScreen::PassphraseConfirm;
+                    self.status = "Step 6/7: Confirm encryption passphrase.".to_string();
+                } else {
+                    self.choice_yes_selected = self.enable_encryption;
+                    self.screen = UiScreen::EncryptionChoice;
+                    self.status =
+                        "Step 4/7: Choose whether to enable ZFS encryption.".to_string();
+                }
+            }
+            KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down | KeyCode::Tab => {
+                self.choice_yes_selected = !self.choice_yes_selected;
+            }
+            KeyCode::Enter => {
+                self.enable_flakes = self.choice_yes_selected;
                 self.warnings = collect_disk_warnings(&self.disks[self.selected_disk].path)?;
                 self.existing_found = has_existing_configuration(&self.disks[self.selected_disk].path)?;
                 if self.existing_found {
@@ -343,6 +483,8 @@ impl App {
                     boot_size: self.boot_size.clone(),
                     swap_size: self.swap_size.clone(),
                     passphrase: self.passphrase.clone(),
+                    enable_encryption: self.enable_encryption,
+                    enable_flakes: self.enable_flakes,
                 };
                 return Ok(Some(FinalAction::Install(cfg)));
             }
@@ -352,38 +494,14 @@ impl App {
                     boot_size: self.boot_size.clone(),
                     swap_size: self.swap_size.clone(),
                     passphrase: self.passphrase.clone(),
+                    enable_encryption: self.enable_encryption,
+                    enable_flakes: self.enable_flakes,
                 };
                 return Ok(Some(FinalAction::Install(cfg)));
             }
             _ => {}
         }
         Ok(None)
-    }
-
-    fn active_field_mut(&mut self) -> &mut String {
-        match self.field {
-            FormField::Boot => &mut self.boot_size,
-            FormField::Swap => &mut self.swap_size,
-            FormField::Pass => &mut self.passphrase,
-            FormField::PassConfirm => &mut self.passphrase_confirm,
-        }
-    }
-
-    fn validate_form(&mut self) -> Result<()> {
-        let size_re = Regex::new(r"^[1-9][0-9]*(K|M|G|T)$").unwrap();
-        if !size_re.is_match(&self.boot_size) {
-            bail!("Boot size must match pattern like 512M, 1G, 16G.");
-        }
-        if !size_re.is_match(&self.swap_size) {
-            bail!("Swap size must match pattern like 2G, 8G, 32G.");
-        }
-        if self.passphrase.len() < 8 {
-            bail!("Passphrase must be at least 8 characters.");
-        }
-        if self.passphrase != self.passphrase_confirm {
-            bail!("Passphrase and confirmation do not match.");
-        }
-        Ok(())
     }
 
     fn draw(&mut self, f: &mut Frame<'_>) {
@@ -409,7 +527,52 @@ impl App {
 
         match self.screen {
             UiScreen::DiskSelect => self.draw_disk_select(f, chunks[1]),
-            UiScreen::Form => self.draw_form(f, chunks[1]),
+            UiScreen::BootSize => self.draw_value_step(
+                f,
+                chunks[1],
+                "Step 2/7 - Boot Partition",
+                "Enter boot partition size (examples: 512M, 1G, 2G).",
+                &self.boot_size,
+                false,
+            ),
+            UiScreen::SwapSize => self.draw_value_step(
+                f,
+                chunks[1],
+                "Step 3/7 - Swap Partition",
+                "Enter swap partition size (examples: 4G, 8G, 16G).",
+                &self.swap_size,
+                false,
+            ),
+            UiScreen::EncryptionChoice => self.draw_yes_no_step(
+                f,
+                chunks[1],
+                "Step 4/7 - Encryption",
+                "Enable ZFS root encryption?",
+                self.choice_yes_selected,
+            ),
+            UiScreen::Passphrase => self.draw_value_step(
+                f,
+                chunks[1],
+                "Step 5/7 - Encryption Passphrase",
+                "Enter passphrase (minimum 8 characters).",
+                &self.passphrase,
+                true,
+            ),
+            UiScreen::PassphraseConfirm => self.draw_value_step(
+                f,
+                chunks[1],
+                "Step 6/7 - Confirm Passphrase",
+                "Enter the same passphrase again.",
+                &self.passphrase_confirm,
+                true,
+            ),
+            UiScreen::FlakesChoice => self.draw_yes_no_step(
+                f,
+                chunks[1],
+                "Step 7/7 - Nix Flakes",
+                "Enable nix-command and flakes in generated configuration?",
+                self.choice_yes_selected,
+            ),
             UiScreen::ExistingConfirm => self.draw_existing_confirm(f, chunks[1]),
             UiScreen::FinalConfirm => self.draw_final_confirm(f, chunks[1]),
         }
@@ -454,52 +617,79 @@ impl App {
         f.render_stateful_widget(list, area, &mut self.list_state);
     }
 
-    fn draw_form(&self, f: &mut Frame<'_>, area: Rect) {
-        let fields = vec![
-            ("Boot size", self.boot_size.clone(), self.field == FormField::Boot, false),
-            ("Swap size", self.swap_size.clone(), self.field == FormField::Swap, false),
-            (
-                "Passphrase",
-                "*".repeat(self.passphrase.chars().count()),
-                self.field == FormField::Pass,
-                true,
-            ),
-            (
-                "Confirm passphrase",
-                "*".repeat(self.passphrase_confirm.chars().count()),
-                self.field == FormField::PassConfirm,
-                true,
-            ),
+    fn draw_value_step(
+        &self,
+        f: &mut Frame<'_>,
+        area: Rect,
+        title: &str,
+        prompt: &str,
+        value: &str,
+        secret: bool,
+    ) {
+        let rendered_value = if secret {
+            "*".repeat(value.chars().count())
+        } else {
+            value.to_string()
+        };
+        let lines = vec![
+            Line::from(Span::styled(prompt, Style::default().fg(Color::LightYellow))),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("> Value: ", Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
+                Span::styled(rendered_value, Style::default().fg(Color::White)),
+            ]),
+            Line::from(""),
+            Line::from("Type to edit, Backspace to delete, Enter next, Esc back"),
         ];
-
-        let mut lines = Vec::new();
-        for (name, value, active, secret) in fields {
-            let marker = if active { ">" } else { " " };
-            let hint = if secret { " (hidden)" } else { "" };
-            lines.push(Line::from(vec![
-                Span::styled(
-                    format!("{} {}{}: ", marker, name, hint),
-                    Style::default()
-                        .fg(if active { Color::LightYellow } else { Color::Green })
-                        .add_modifier(if active { Modifier::BOLD } else { Modifier::empty() }),
-                ),
-                Span::styled(
-                    value,
-                    Style::default().fg(if active { Color::White } else { Color::Gray }),
-                ),
-            ]));
-        }
-        lines.push(Line::from(""));
-        lines.push(Line::from(
-            "Controls: Tab or arrows move fields, Backspace delete, Enter continue, Esc back",
-        ));
 
         let p = Paragraph::new(lines)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(Color::LightBlue))
-                    .title("Install Settings"),
+                    .title(title),
+            )
+            .wrap(Wrap { trim: true });
+        f.render_widget(p, area);
+    }
+
+    fn draw_yes_no_step(
+        &self,
+        f: &mut Frame<'_>,
+        area: Rect,
+        title: &str,
+        prompt: &str,
+        yes_selected: bool,
+    ) {
+        let yes_style = if yes_selected {
+            Style::default().fg(Color::Black).bg(Color::LightGreen).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Green)
+        };
+        let no_style = if yes_selected {
+            Style::default().fg(Color::Gray)
+        } else {
+            Style::default().fg(Color::Black).bg(Color::LightRed).add_modifier(Modifier::BOLD)
+        };
+
+        let lines = vec![
+            Line::from(Span::styled(prompt, Style::default().fg(Color::LightYellow))),
+            Line::from(""),
+            Line::from("Use Left/Right or Up/Down to choose, Enter to confirm."),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("[ Yes ]", yes_style),
+                Span::raw("   "),
+                Span::styled("[ No ]", no_style),
+            ]),
+        ];
+
+        let p = Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::LightBlue))
+                    .title(title),
             )
             .wrap(Wrap { trim: true });
         f.render_widget(p, area);
@@ -566,6 +756,14 @@ impl App {
             Line::from(format!("Disk: {} ({}, {})", disk.path, disk.size, disk.model)),
             Line::from(format!("Boot: {}", self.boot_size)),
             Line::from(format!("Swap: {}", self.swap_size)),
+            Line::from(format!(
+                "Encryption: {}",
+                if self.enable_encryption { "enabled" } else { "disabled" }
+            )),
+            Line::from(format!(
+                "Flakes: {}",
+                if self.enable_flakes { "enabled" } else { "disabled" }
+            )),
         ];
 
         if !self.warnings.is_empty() {
@@ -611,9 +809,10 @@ impl TuiSession {
     fn start() -> Result<Self> {
         let mut stdout = io::stdout();
         enable_raw_mode()?;
-        stdout.execute(EnterAlternateScreen)?;
+        execute!(stdout, EnterAlternateScreen, TermClear(ClearType::All), MoveTo(0, 0))?;
         let backend = CrosstermBackend::new(stdout);
-        let terminal = Terminal::new(backend)?;
+        let mut terminal = Terminal::new(backend)?;
+        terminal.clear()?;
         Ok(Self { terminal })
     }
 
@@ -736,6 +935,17 @@ where
         _ => Some(false),
     };
     Ok(parsed)
+}
+
+fn validate_size_input(value: &str, label: &str) -> Result<()> {
+    let size_re = Regex::new(r"^[1-9][0-9]*(K|M|G|T)$").unwrap();
+    if !size_re.is_match(value) {
+        bail!(
+            "{} size must match pattern like 512M, 1G, 16G.",
+            label
+        );
+    }
+    Ok(())
 }
 
 fn has_existing_configuration(disk: &str) -> Result<bool> {
@@ -899,46 +1109,75 @@ fn run_installer(cfg: &InstallConfig) -> Result<()> {
     run_command("mkswap", &["-L", "SWAP", &part_swap])?;
     run_command("swapon", &[&part_swap])?;
 
-    println!("-> Creating encrypted zpool and datasets");
-    let mut keyfile = NamedTempFile::new_in("/tmp")?;
-    use std::io::Write;
-    keyfile.write_all(cfg.passphrase.as_bytes())?;
-    keyfile.write_all(b"\n")?;
-    let keypath = keyfile.path().to_string_lossy().to_string();
+    if cfg.enable_encryption {
+        println!("-> Creating encrypted zpool and datasets");
+        let mut keyfile = NamedTempFile::new_in("/tmp")?;
+        use std::io::Write;
+        keyfile.write_all(cfg.passphrase.as_bytes())?;
+        keyfile.write_all(b"\n")?;
+        let keypath = keyfile.path().to_string_lossy().to_string();
 
-    run_command(
-        "zpool",
-        &[
-            "create",
-            "-f",
-            "-o",
-            "ashift=12",
-            "-o",
-            "autotrim=on",
-            "-O",
-            "compression=lz4",
-            "-O",
-            "acltype=posixacl",
-            "-O",
-            "atime=off",
-            "-O",
-            "xattr=sa",
-            "-O",
-            "normalization=formD",
-            "-O",
-            "mountpoint=none",
-            "-O",
-            "encryption=aes-256-gcm",
-            "-O",
-            "keyformat=passphrase",
-            "-O",
-            &format!("keylocation=file://{keypath}"),
-            "zroot",
-            &part_zfs,
-        ],
-    )?;
+        run_command(
+            "zpool",
+            &[
+                "create",
+                "-f",
+                "-o",
+                "ashift=12",
+                "-o",
+                "autotrim=on",
+                "-O",
+                "compression=lz4",
+                "-O",
+                "acltype=posixacl",
+                "-O",
+                "atime=off",
+                "-O",
+                "xattr=sa",
+                "-O",
+                "normalization=formD",
+                "-O",
+                "mountpoint=none",
+                "-O",
+                "encryption=aes-256-gcm",
+                "-O",
+                "keyformat=passphrase",
+                "-O",
+                &format!("keylocation=file://{keypath}"),
+                "zroot",
+                &part_zfs,
+            ],
+        )?;
 
-    run_command("zfs", &["set", "keylocation=prompt", "zroot"])?;
+        run_command("zfs", &["set", "keylocation=prompt", "zroot"])?;
+    } else {
+        println!("-> Creating unencrypted zpool and datasets");
+        run_command(
+            "zpool",
+            &[
+                "create",
+                "-f",
+                "-o",
+                "ashift=12",
+                "-o",
+                "autotrim=on",
+                "-O",
+                "compression=lz4",
+                "-O",
+                "acltype=posixacl",
+                "-O",
+                "atime=off",
+                "-O",
+                "xattr=sa",
+                "-O",
+                "normalization=formD",
+                "-O",
+                "mountpoint=none",
+                "zroot",
+                &part_zfs,
+            ],
+        )?;
+    }
     run_command("zfs", &["create", "-o", "mountpoint=legacy", "zroot/root"])?;
     run_command("zfs", &["create", "-o", "mountpoint=legacy", "zroot/nix"])?;
     run_command("zfs", &["create", "-o", "mountpoint=legacy", "zroot/home"])?;
@@ -966,8 +1205,13 @@ fn run_installer(cfg: &InstallConfig) -> Result<()> {
         bail!("Could not determine PARTUUID for swap partition.");
     }
 
+    let flakes_snippet = if cfg.enable_flakes {
+        "  nix.settings.experimental-features = [ \"nix-command\" \"flakes\" ];\n\n"
+    } else {
+        ""
+    };
     let zfs_module = format!(
-        "{{ config, pkgs, ... }}:\n\n{{\n  boot.loader.systemd-boot.enable = true;\n  boot.loader.efi.canTouchEfiVariables = true;\n  boot.loader.grub.enable = pkgs.lib.mkForce false;\n\n  networking.hostId = \"{host_id}\";\n  boot.supportedFilesystems = [ \"zfs\" ];\n  boot.zfs.devNodes = \"/dev/disk/by-partlabel\";\n\n  swapDevices = pkgs.lib.mkForce [ {{\n    device = \"/dev/disk/by-partuuid/{swap_partuuid}\";\n    randomEncryption.enable = true;\n  }} ];\n}}\n"
+        "{{ config, pkgs, ... }}:\n\n{{\n  boot.loader.systemd-boot.enable = true;\n  boot.loader.efi.canTouchEfiVariables = true;\n  boot.loader.grub.enable = pkgs.lib.mkForce false;\n\n  networking.hostId = \"{host_id}\";\n  boot.supportedFilesystems = [ \"zfs\" ];\n  boot.zfs.devNodes = \"/dev/disk/by-partlabel\";\n\n{flakes_snippet}  swapDevices = pkgs.lib.mkForce [ {{\n    device = \"/dev/disk/by-partuuid/{swap_partuuid}\";\n    randomEncryption.enable = true;\n  }} ];\n}}\n"
     );
     fs::write("/mnt/etc/nixos/zfs.nix", zfs_module)?;
 
