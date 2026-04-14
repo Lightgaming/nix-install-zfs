@@ -75,6 +75,10 @@ fn run() -> Result<()> {
             println!("Target disk: {}", cfg.disk.path);
             println!("Boot size:   {}", cfg.boot_size);
             println!("Swap size:   {}", cfg.swap_size);
+            println!("Hostname:    {}", cfg.hostname);
+            println!("Timezone:    {}", cfg.timezone);
+            println!("Keyboard:    {}", cfg.keyboard_layout);
+            println!("User:        {}", cfg.username);
             println!(
                 "Encryption:  {}",
                 if cfg.enable_encryption { "enabled" } else { "disabled" }
@@ -82,6 +86,18 @@ fn run() -> Result<()> {
             println!(
                 "Flakes:      {}",
                 if cfg.enable_flakes { "enabled" } else { "disabled" }
+            );
+            println!(
+                "Sudo:        {}",
+                if cfg.enable_sudo { "enabled" } else { "disabled" }
+            );
+            println!(
+                "NetworkMgr:  {}",
+                if cfg.install_networkmanager { "enabled" } else { "disabled" }
+            );
+            println!(
+                "Git:         {}",
+                if cfg.enable_git { "enabled" } else { "disabled" }
             );
             println!();
             run_installer(&cfg)
@@ -139,6 +155,15 @@ struct InstallConfig {
     passphrase: String,
     enable_encryption: bool,
     enable_flakes: bool,
+    hostname: String,
+    timezone: String,
+    keyboard_layout: String,
+    username: String,
+    user_password: String,
+    enable_sudo: bool,
+    root_password: String,
+    install_networkmanager: bool,
+    enable_git: bool,
 }
 
 enum FinalAction {
@@ -155,6 +180,17 @@ enum UiScreen {
     Passphrase,
     PassphraseConfirm,
     FlakesChoice,
+    Hostname,
+    Timezone,
+    KeyboardLayout,
+    Username,
+    UserPassword,
+    UserPasswordConfirm,
+    EnableSudoChoice,
+    RootPassword,
+    RootPasswordConfirm,
+    NetworkManagerChoice,
+    GitChoice,
     ExistingConfirm,
     FinalConfirm,
 }
@@ -170,6 +206,17 @@ struct App {
     passphrase: String,
     passphrase_confirm: String,
     enable_flakes: bool,
+    hostname: String,
+    timezone: String,
+    keyboard_layout: String,
+    username: String,
+    user_password: String,
+    user_password_confirm: String,
+    enable_sudo: bool,
+    root_password: String,
+    root_password_confirm: String,
+    install_networkmanager: bool,
+    enable_git: bool,
     existing_found: bool,
     choice_yes_selected: bool,
     existing_overwrite_selected: bool,
@@ -193,6 +240,17 @@ impl App {
             passphrase: String::new(),
             passphrase_confirm: String::new(),
             enable_flakes: true,
+            hostname: "nixos".to_string(),
+            timezone: "UTC".to_string(),
+            keyboard_layout: "us".to_string(),
+            username: "nixos".to_string(),
+            user_password: String::new(),
+            user_password_confirm: String::new(),
+            enable_sudo: true,
+            root_password: String::new(),
+            root_password_confirm: String::new(),
+            install_networkmanager: true,
+            enable_git: true,
             existing_found: false,
             choice_yes_selected: true,
             existing_overwrite_selected: true,
@@ -229,6 +287,17 @@ impl App {
             UiScreen::Passphrase => self.handle_passphrase_key(code),
             UiScreen::PassphraseConfirm => self.handle_passphrase_confirm_key(code),
             UiScreen::FlakesChoice => self.handle_flakes_choice_key(code),
+            UiScreen::Hostname => self.handle_hostname_key(code),
+            UiScreen::Timezone => self.handle_timezone_key(code),
+            UiScreen::KeyboardLayout => self.handle_keyboard_layout_key(code),
+            UiScreen::Username => self.handle_username_key(code),
+            UiScreen::UserPassword => self.handle_user_password_key(code),
+            UiScreen::UserPasswordConfirm => self.handle_user_password_confirm_key(code),
+            UiScreen::EnableSudoChoice => self.handle_enable_sudo_key(code),
+            UiScreen::RootPassword => self.handle_root_password_key(code),
+            UiScreen::RootPasswordConfirm => self.handle_root_password_confirm_key(code),
+            UiScreen::NetworkManagerChoice => self.handle_networkmanager_key(code),
+            UiScreen::GitChoice => self.handle_git_key(code),
             UiScreen::ExistingConfirm => self.handle_existing_key(code),
             UiScreen::FinalConfirm => self.handle_final_key(code),
         }
@@ -416,6 +485,285 @@ impl App {
             }
             KeyCode::Enter => {
                 self.enable_flakes = self.choice_yes_selected;
+                self.screen = UiScreen::Hostname;
+                self.status = "Next: set hostname, then press Enter.".to_string();
+            }
+            _ => {}
+        }
+        Ok(None)
+    }
+
+    fn handle_hostname_key(&mut self, code: KeyCode) -> Result<Option<FinalAction>> {
+        match code {
+            KeyCode::Esc => {
+                self.choice_yes_selected = self.enable_flakes;
+                self.screen = UiScreen::FlakesChoice;
+                self.status = "Step 7/7: Choose whether to enable flakes by default.".to_string();
+            }
+            KeyCode::Backspace => {
+                self.hostname.pop();
+            }
+            KeyCode::Char(c) => {
+                if !c.is_control() {
+                    self.hostname.push(c);
+                }
+            }
+            KeyCode::Enter => {
+                if let Err(err) = validate_hostname(&self.hostname) {
+                    self.status = err.to_string();
+                } else {
+                    self.screen = UiScreen::Timezone;
+                    self.status = "Next: set timezone (e.g. Europe/Berlin), then press Enter.".to_string();
+                }
+            }
+            _ => {}
+        }
+        Ok(None)
+    }
+
+    fn handle_timezone_key(&mut self, code: KeyCode) -> Result<Option<FinalAction>> {
+        match code {
+            KeyCode::Esc => {
+                self.screen = UiScreen::Hostname;
+                self.status = "Next: set hostname, then press Enter.".to_string();
+            }
+            KeyCode::Backspace => {
+                self.timezone.pop();
+            }
+            KeyCode::Char(c) => {
+                if !c.is_control() {
+                    self.timezone.push(c);
+                }
+            }
+            KeyCode::Enter => {
+                if let Err(err) = validate_timezone(&self.timezone) {
+                    self.status = err.to_string();
+                } else {
+                    self.screen = UiScreen::KeyboardLayout;
+                    self.status = "Next: set keyboard layout (e.g. us, de), then press Enter.".to_string();
+                }
+            }
+            _ => {}
+        }
+        Ok(None)
+    }
+
+    fn handle_keyboard_layout_key(&mut self, code: KeyCode) -> Result<Option<FinalAction>> {
+        match code {
+            KeyCode::Esc => {
+                self.screen = UiScreen::Timezone;
+                self.status = "Next: set timezone, then press Enter.".to_string();
+            }
+            KeyCode::Backspace => {
+                self.keyboard_layout.pop();
+            }
+            KeyCode::Char(c) => {
+                if !c.is_control() {
+                    self.keyboard_layout.push(c);
+                }
+            }
+            KeyCode::Enter => {
+                if let Err(err) = validate_keyboard_layout(&self.keyboard_layout) {
+                    self.status = err.to_string();
+                } else {
+                    self.screen = UiScreen::Username;
+                    self.status = "Next: set username, then press Enter.".to_string();
+                }
+            }
+            _ => {}
+        }
+        Ok(None)
+    }
+
+    fn handle_username_key(&mut self, code: KeyCode) -> Result<Option<FinalAction>> {
+        match code {
+            KeyCode::Esc => {
+                self.screen = UiScreen::KeyboardLayout;
+                self.status = "Next: set keyboard layout, then press Enter.".to_string();
+            }
+            KeyCode::Backspace => {
+                self.username.pop();
+            }
+            KeyCode::Char(c) => {
+                if !c.is_control() {
+                    self.username.push(c);
+                }
+            }
+            KeyCode::Enter => {
+                if let Err(err) = validate_username(&self.username) {
+                    self.status = err.to_string();
+                } else {
+                    self.screen = UiScreen::UserPassword;
+                    self.status = "Next: enter user password, then press Enter.".to_string();
+                }
+            }
+            _ => {}
+        }
+        Ok(None)
+    }
+
+    fn handle_user_password_key(&mut self, code: KeyCode) -> Result<Option<FinalAction>> {
+        match code {
+            KeyCode::Esc => {
+                self.screen = UiScreen::Username;
+                self.status = "Next: set username, then press Enter.".to_string();
+            }
+            KeyCode::Backspace => {
+                self.user_password.pop();
+            }
+            KeyCode::Char(c) => {
+                if !c.is_control() {
+                    self.user_password.push(c);
+                }
+            }
+            KeyCode::Enter => {
+                if let Err(err) = validate_password(&self.user_password, "User password") {
+                    self.status = err.to_string();
+                } else {
+                    self.screen = UiScreen::UserPasswordConfirm;
+                    self.status = "Next: confirm user password, then press Enter.".to_string();
+                }
+            }
+            _ => {}
+        }
+        Ok(None)
+    }
+
+    fn handle_user_password_confirm_key(&mut self, code: KeyCode) -> Result<Option<FinalAction>> {
+        match code {
+            KeyCode::Esc => {
+                self.screen = UiScreen::UserPassword;
+                self.status = "Next: enter user password, then press Enter.".to_string();
+            }
+            KeyCode::Backspace => {
+                self.user_password_confirm.pop();
+            }
+            KeyCode::Char(c) => {
+                if !c.is_control() {
+                    self.user_password_confirm.push(c);
+                }
+            }
+            KeyCode::Enter => {
+                if self.user_password != self.user_password_confirm {
+                    self.status = "User password and confirmation do not match.".to_string();
+                } else {
+                    self.choice_yes_selected = self.enable_sudo;
+                    self.screen = UiScreen::EnableSudoChoice;
+                    self.status = "Next: choose whether the user should have sudo access.".to_string();
+                }
+            }
+            _ => {}
+        }
+        Ok(None)
+    }
+
+    fn handle_enable_sudo_key(&mut self, code: KeyCode) -> Result<Option<FinalAction>> {
+        match code {
+            KeyCode::Esc => {
+                self.screen = UiScreen::UserPasswordConfirm;
+                self.status = "Next: confirm user password, then press Enter.".to_string();
+            }
+            KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down | KeyCode::Tab => {
+                self.choice_yes_selected = !self.choice_yes_selected;
+            }
+            KeyCode::Enter => {
+                self.enable_sudo = self.choice_yes_selected;
+                self.screen = UiScreen::RootPassword;
+                self.status = "Next: enter root password, then press Enter.".to_string();
+            }
+            _ => {}
+        }
+        Ok(None)
+    }
+
+    fn handle_root_password_key(&mut self, code: KeyCode) -> Result<Option<FinalAction>> {
+        match code {
+            KeyCode::Esc => {
+                self.choice_yes_selected = self.enable_sudo;
+                self.screen = UiScreen::EnableSudoChoice;
+                self.status = "Next: choose whether the user should have sudo access.".to_string();
+            }
+            KeyCode::Backspace => {
+                self.root_password.pop();
+            }
+            KeyCode::Char(c) => {
+                if !c.is_control() {
+                    self.root_password.push(c);
+                }
+            }
+            KeyCode::Enter => {
+                if let Err(err) = validate_password(&self.root_password, "Root password") {
+                    self.status = err.to_string();
+                } else {
+                    self.screen = UiScreen::RootPasswordConfirm;
+                    self.status = "Next: confirm root password, then press Enter.".to_string();
+                }
+            }
+            _ => {}
+        }
+        Ok(None)
+    }
+
+    fn handle_root_password_confirm_key(&mut self, code: KeyCode) -> Result<Option<FinalAction>> {
+        match code {
+            KeyCode::Esc => {
+                self.screen = UiScreen::RootPassword;
+                self.status = "Next: enter root password, then press Enter.".to_string();
+            }
+            KeyCode::Backspace => {
+                self.root_password_confirm.pop();
+            }
+            KeyCode::Char(c) => {
+                if !c.is_control() {
+                    self.root_password_confirm.push(c);
+                }
+            }
+            KeyCode::Enter => {
+                if self.root_password != self.root_password_confirm {
+                    self.status = "Root password and confirmation do not match.".to_string();
+                } else {
+                    self.choice_yes_selected = self.install_networkmanager;
+                    self.screen = UiScreen::NetworkManagerChoice;
+                    self.status = "Next: choose whether to enable NetworkManager.".to_string();
+                }
+            }
+            _ => {}
+        }
+        Ok(None)
+    }
+
+    fn handle_networkmanager_key(&mut self, code: KeyCode) -> Result<Option<FinalAction>> {
+        match code {
+            KeyCode::Esc => {
+                self.screen = UiScreen::RootPasswordConfirm;
+                self.status = "Next: confirm root password, then press Enter.".to_string();
+            }
+            KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down | KeyCode::Tab => {
+                self.choice_yes_selected = !self.choice_yes_selected;
+            }
+            KeyCode::Enter => {
+                self.install_networkmanager = self.choice_yes_selected;
+                self.choice_yes_selected = self.enable_git;
+                self.screen = UiScreen::GitChoice;
+                self.status = "Next: choose whether to enable git.".to_string();
+            }
+            _ => {}
+        }
+        Ok(None)
+    }
+
+    fn handle_git_key(&mut self, code: KeyCode) -> Result<Option<FinalAction>> {
+        match code {
+            KeyCode::Esc => {
+                self.choice_yes_selected = self.install_networkmanager;
+                self.screen = UiScreen::NetworkManagerChoice;
+                self.status = "Next: choose whether to enable NetworkManager.".to_string();
+            }
+            KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down | KeyCode::Tab => {
+                self.choice_yes_selected = !self.choice_yes_selected;
+            }
+            KeyCode::Enter => {
+                self.enable_git = self.choice_yes_selected;
                 self.warnings = collect_disk_warnings(&self.disks[self.selected_disk].path)?;
                 self.existing_found = has_existing_configuration(&self.disks[self.selected_disk].path)?;
                 if self.existing_found {
@@ -485,6 +833,15 @@ impl App {
                     passphrase: self.passphrase.clone(),
                     enable_encryption: self.enable_encryption,
                     enable_flakes: self.enable_flakes,
+                    hostname: self.hostname.clone(),
+                    timezone: self.timezone.clone(),
+                    keyboard_layout: self.keyboard_layout.clone(),
+                    username: self.username.clone(),
+                    user_password: self.user_password.clone(),
+                    enable_sudo: self.enable_sudo,
+                    root_password: self.root_password.clone(),
+                    install_networkmanager: self.install_networkmanager,
+                    enable_git: self.enable_git,
                 };
                 return Ok(Some(FinalAction::Install(cfg)));
             }
@@ -496,6 +853,15 @@ impl App {
                     passphrase: self.passphrase.clone(),
                     enable_encryption: self.enable_encryption,
                     enable_flakes: self.enable_flakes,
+                    hostname: self.hostname.clone(),
+                    timezone: self.timezone.clone(),
+                    keyboard_layout: self.keyboard_layout.clone(),
+                    username: self.username.clone(),
+                    user_password: self.user_password.clone(),
+                    enable_sudo: self.enable_sudo,
+                    root_password: self.root_password.clone(),
+                    install_networkmanager: self.install_networkmanager,
+                    enable_git: self.enable_git,
                 };
                 return Ok(Some(FinalAction::Install(cfg)));
             }
@@ -571,6 +937,91 @@ impl App {
                 chunks[1],
                 "Step 7/7 - Nix Flakes",
                 "Enable nix-command and flakes in generated configuration?",
+                self.choice_yes_selected,
+            ),
+            UiScreen::Hostname => self.draw_value_step(
+                f,
+                chunks[1],
+                "System - Hostname",
+                "Enter hostname (example: nixos, laptop, server01).",
+                &self.hostname,
+                false,
+            ),
+            UiScreen::Timezone => self.draw_value_step(
+                f,
+                chunks[1],
+                "System - Timezone",
+                "Enter timezone (example: UTC, Europe/Berlin, America/New_York).",
+                &self.timezone,
+                false,
+            ),
+            UiScreen::KeyboardLayout => self.draw_value_step(
+                f,
+                chunks[1],
+                "System - Keyboard Layout",
+                "Enter keymap/layout (example: us, de, fr).",
+                &self.keyboard_layout,
+                false,
+            ),
+            UiScreen::Username => self.draw_value_step(
+                f,
+                chunks[1],
+                "User - Username",
+                "Enter username for the initial user account.",
+                &self.username,
+                false,
+            ),
+            UiScreen::UserPassword => self.draw_value_step(
+                f,
+                chunks[1],
+                "User - Password",
+                "Enter password for the initial user account.",
+                &self.user_password,
+                true,
+            ),
+            UiScreen::UserPasswordConfirm => self.draw_value_step(
+                f,
+                chunks[1],
+                "User - Confirm Password",
+                "Enter the same user password again.",
+                &self.user_password_confirm,
+                true,
+            ),
+            UiScreen::EnableSudoChoice => self.draw_yes_no_step(
+                f,
+                chunks[1],
+                "User - Sudo Access",
+                "Should this user be added to the wheel (sudo) group?",
+                self.choice_yes_selected,
+            ),
+            UiScreen::RootPassword => self.draw_value_step(
+                f,
+                chunks[1],
+                "Root - Password",
+                "Enter root password.",
+                &self.root_password,
+                true,
+            ),
+            UiScreen::RootPasswordConfirm => self.draw_value_step(
+                f,
+                chunks[1],
+                "Root - Confirm Password",
+                "Enter the same root password again.",
+                &self.root_password_confirm,
+                true,
+            ),
+            UiScreen::NetworkManagerChoice => self.draw_yes_no_step(
+                f,
+                chunks[1],
+                "Network",
+                "Enable NetworkManager?",
+                self.choice_yes_selected,
+            ),
+            UiScreen::GitChoice => self.draw_yes_no_step(
+                f,
+                chunks[1],
+                "Programs",
+                "Enable Git in programs.git?",
                 self.choice_yes_selected,
             ),
             UiScreen::ExistingConfirm => self.draw_existing_confirm(f, chunks[1]),
@@ -764,6 +1215,22 @@ impl App {
                 "Flakes: {}",
                 if self.enable_flakes { "enabled" } else { "disabled" }
             )),
+            Line::from(format!("Hostname: {}", self.hostname)),
+            Line::from(format!("Timezone: {}", self.timezone)),
+            Line::from(format!("Keyboard: {}", self.keyboard_layout)),
+            Line::from(format!("User: {}", self.username)),
+            Line::from(format!(
+                "Sudo: {}",
+                if self.enable_sudo { "enabled" } else { "disabled" }
+            )),
+            Line::from(format!(
+                "NetworkManager: {}",
+                if self.install_networkmanager { "enabled" } else { "disabled" }
+            )),
+            Line::from(format!(
+                "Git: {}",
+                if self.enable_git { "enabled" } else { "disabled" }
+            )),
         ];
 
         if !self.warnings.is_empty() {
@@ -946,6 +1413,64 @@ fn validate_size_input(value: &str, label: &str) -> Result<()> {
         );
     }
     Ok(())
+}
+
+fn validate_hostname(value: &str) -> Result<()> {
+    let value = value.trim();
+    if value.is_empty() {
+        bail!("Hostname cannot be empty.");
+    }
+    let re = Regex::new(r"^[A-Za-z0-9][A-Za-z0-9-]{0,62}$").unwrap();
+    if !re.is_match(value) {
+        bail!("Hostname must use letters, digits, or '-', and start with a letter/digit.");
+    }
+    Ok(())
+}
+
+fn validate_timezone(value: &str) -> Result<()> {
+    let value = value.trim();
+    if value.is_empty() {
+        bail!("Timezone cannot be empty.");
+    }
+    if value.contains(' ') {
+        bail!("Timezone must not contain spaces (example: Europe/Berlin).");
+    }
+    Ok(())
+}
+
+fn validate_keyboard_layout(value: &str) -> Result<()> {
+    let value = value.trim();
+    if value.is_empty() {
+        bail!("Keyboard layout cannot be empty.");
+    }
+    let re = Regex::new(r"^[A-Za-z0-9_-]+$").unwrap();
+    if !re.is_match(value) {
+        bail!("Keyboard layout must use letters, digits, '_' or '-'.");
+    }
+    Ok(())
+}
+
+fn validate_username(value: &str) -> Result<()> {
+    let value = value.trim();
+    if value.is_empty() {
+        bail!("Username cannot be empty.");
+    }
+    let re = Regex::new(r"^[a-z_][a-z0-9_-]*$").unwrap();
+    if !re.is_match(value) {
+        bail!("Username must start with a-z/_ and contain only a-z, 0-9, '_' or '-'.");
+    }
+    Ok(())
+}
+
+fn validate_password(value: &str, label: &str) -> Result<()> {
+    if value.len() < 8 {
+        bail!("{} must be at least 8 characters.", label);
+    }
+    Ok(())
+}
+
+fn nix_escape(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 fn has_existing_configuration(disk: &str) -> Result<bool> {
@@ -1205,15 +1730,31 @@ fn run_installer(cfg: &InstallConfig) -> Result<()> {
         bail!("Could not determine PARTUUID for swap partition.");
     }
 
+    let zfs_module = format!(
+        "{{ config, pkgs, ... }}:\n\n{{\n  boot.loader.systemd-boot.enable = true;\n  boot.loader.efi.canTouchEfiVariables = true;\n  boot.loader.grub.enable = pkgs.lib.mkForce false;\n\n  networking.hostId = \"{host_id}\";\n  boot.supportedFilesystems = [ \"zfs\" ];\n  boot.zfs.devNodes = \"/dev/disk/by-partlabel\";\n\n  swapDevices = pkgs.lib.mkForce [ {{\n    device = \"/dev/disk/by-partuuid/{swap_partuuid}\";\n    randomEncryption.enable = true;\n  }} ];\n}}\n"
+    );
+    fs::write("/mnt/etc/nixos/zfs.nix", zfs_module)?;
+
+    let escaped_username = nix_escape(&cfg.username);
+    let escaped_user_password = nix_escape(&cfg.user_password);
+    let escaped_root_password = nix_escape(&cfg.root_password);
+    let escaped_hostname = nix_escape(&cfg.hostname);
+    let escaped_timezone = nix_escape(&cfg.timezone);
+    let escaped_keyboard_layout = nix_escape(&cfg.keyboard_layout);
+
     let flakes_snippet = if cfg.enable_flakes {
-        "  nix.settings.experimental-features = [ \"nix-command\" \"flakes\" ];\n\n"
+        "  nix.settings.experimental-features = [ \"nix-command\" \"flakes\" ];\n"
     } else {
         ""
     };
-    let zfs_module = format!(
-        "{{ config, pkgs, ... }}:\n\n{{\n  boot.loader.systemd-boot.enable = true;\n  boot.loader.efi.canTouchEfiVariables = true;\n  boot.loader.grub.enable = pkgs.lib.mkForce false;\n\n  networking.hostId = \"{host_id}\";\n  boot.supportedFilesystems = [ \"zfs\" ];\n  boot.zfs.devNodes = \"/dev/disk/by-partlabel\";\n\n{flakes_snippet}  swapDevices = pkgs.lib.mkForce [ {{\n    device = \"/dev/disk/by-partuuid/{swap_partuuid}\";\n    randomEncryption.enable = true;\n  }} ];\n}}\n"
+    let user_groups = if cfg.enable_sudo { "[ \"wheel\" ]" } else { "[ ]" };
+    let networkmanager_value = if cfg.install_networkmanager { "true" } else { "false" };
+    let git_value = if cfg.enable_git { "true" } else { "false" };
+
+    let setup_module = format!(
+        "{{ config, pkgs, ... }}:\n\n{{\n  networking.hostName = \"{escaped_hostname}\";\n  time.timeZone = \"{escaped_timezone}\";\n  services.xserver.xkb.layout = \"{escaped_keyboard_layout}\";\n  console.keyMap = \"{escaped_keyboard_layout}\";\n{flakes_snippet}  networking.networkmanager.enable = {networkmanager_value};\n  programs.git.enable = {git_value};\n\n  users.users.\"{escaped_username}\" = {{\n    isNormalUser = true;\n    extraGroups = {user_groups};\n    initialPassword = \"{escaped_user_password}\";\n  }};\n\n  users.users.root.initialPassword = \"{escaped_root_password}\";\n}}\n"
     );
-    fs::write("/mnt/etc/nixos/zfs.nix", zfs_module)?;
+    fs::write("/mnt/etc/nixos/system-setup.nix", setup_module)?;
 
     let config_path = PathBuf::from("/mnt/etc/nixos/configuration.nix");
     let cfg_text = fs::read_to_string(&config_path)
@@ -1222,11 +1763,15 @@ fn run_installer(cfg: &InstallConfig) -> Result<()> {
     let marker = "./hardware-configuration.nix";
     if !cfg_text.contains(marker) {
         bail!(
-            "Could not find {marker} import in configuration.nix; please add ./zfs.nix manually."
+            "Could not find {marker} import in configuration.nix; please add ./zfs.nix and ./system-setup.nix manually."
         );
     }
 
-    let replaced = cfg_text.replacen(marker, "./hardware-configuration.nix ./zfs.nix", 1);
+    let replaced = cfg_text.replacen(
+        marker,
+        "./hardware-configuration.nix ./zfs.nix ./system-setup.nix",
+        1,
+    );
     fs::write(&config_path, replaced)?;
 
     println!();

@@ -8,6 +8,9 @@ It replaces the old interactive shell flow with a safer TUI that helps reduce ac
 - guided one-by-one setup screens (not all fields on one page)
 - validation for partition sizes and passphrase input
 - explicit yes/no prompts for ZFS encryption and flakes enablement
+- guided prompts for system settings (hostname, timezone, keyboard layout)
+- guided prompts for account setup (user, user password, sudo access, root password)
+- guided prompts for optional components (NetworkManager, Git)
 - warnings for mounted/system disks
 - staged confirmations before destructive actions
 
@@ -27,6 +30,7 @@ The installer performs the following high-level steps:
 6. runs `nixos-generate-config --root /mnt`
 7. writes `/mnt/etc/nixos/zfs.nix`
 8. injects `./zfs.nix` into generated `configuration.nix`
+9. writes `./system-setup.nix` with your selected system/user/network/program options
 
 ## Prerequisites
 
@@ -121,6 +125,7 @@ cargo run
 
 - Disk selection: `Up` / `Down`, `Enter`
 - Wizard steps: each page asks one value at a time (`Boot size`, `Swap size`, `Encryption`, `Passphrase`, `Flakes`)
+- Additional guided pages configure hostname, timezone, keyboard layout, users, root password, network, and git
 - Value entry pages: typing, `Backspace`, `Enter` next, `Esc` back
 - Yes/No pages (encryption, flakes): arrow keys + `Enter`
 - Existing configuration prompt: arrow keys + `Enter` (or `O` / `K`)
