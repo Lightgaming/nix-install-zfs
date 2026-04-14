@@ -179,6 +179,8 @@ struct App {
     passphrase: String,
     passphrase_confirm: String,
     existing_found: bool,
+    existing_overwrite_selected: bool,
+    final_proceed_selected: bool,
     warnings: Vec<String>,
     status: String,
 }
@@ -198,6 +200,8 @@ impl App {
             passphrase: String::new(),
             passphrase_confirm: String::new(),
             existing_found: false,
+            existing_overwrite_selected: true,
+            final_proceed_selected: true,
             warnings: Vec::new(),
             status: "Select installation disk with arrow keys, Enter to continue.".to_string(),
         }
@@ -260,8 +264,8 @@ impl App {
                 self.screen = UiScreen::DiskSelect;
                 self.status = "Select installation disk with arrow keys, Enter to continue.".to_string();
             }
-            KeyCode::Tab => self.field = self.field.next(),
-            KeyCode::BackTab => self.field = self.field.prev(),
+            KeyCode::Tab | KeyCode::Down | KeyCode::Right => self.field = self.field.next(),
+            KeyCode::BackTab | KeyCode::Up | KeyCode::Left => self.field = self.field.prev(),
             KeyCode::Backspace => {
                 self.active_field_mut().pop();
             }
@@ -275,14 +279,16 @@ impl App {
                 self.warnings = collect_disk_warnings(&self.disks[self.selected_disk].path)?;
                 self.existing_found = has_existing_configuration(&self.disks[self.selected_disk].path)?;
                 if self.existing_found {
+                    self.existing_overwrite_selected = true;
                     self.screen = UiScreen::ExistingConfirm;
                     self.status =
-                        "Existing install markers detected. Press O to overwrite or K to keep + exit."
+                        "Existing install markers detected. Use arrows, then Enter to choose."
                             .to_string();
                 } else {
+                    self.final_proceed_selected = true;
                     self.screen = UiScreen::FinalConfirm;
                     self.status =
-                        "Final confirmation. Press F10 to erase selected disk and continue.".to_string();
+                        "Final confirmation. Use arrows and Enter (or F10) to continue.".to_string();
                 }
             }
             _ => {}
@@ -292,11 +298,30 @@ impl App {
 
     fn handle_existing_key(&mut self, code: KeyCode) -> Result<Option<FinalAction>> {
         match code {
-            KeyCode::Char('k') | KeyCode::Char('K') | KeyCode::Esc => return Ok(Some(FinalAction::Exit)),
+            KeyCode::Esc => return Ok(Some(FinalAction::Exit)),
+            KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down | KeyCode::Tab => {
+                self.existing_overwrite_selected = !self.existing_overwrite_selected;
+            }
             KeyCode::Char('o') | KeyCode::Char('O') => {
+                self.existing_overwrite_selected = true;
+                self.final_proceed_selected = true;
                 self.screen = UiScreen::FinalConfirm;
-                self.status = "Overwrite confirmed. Press F10 to start install or Esc to cancel."
+                self.status = "Overwrite confirmed. Use arrows and Enter (or F10) to continue."
                     .to_string();
+            }
+            KeyCode::Char('k') | KeyCode::Char('K') => {
+                self.existing_overwrite_selected = false;
+                return Ok(Some(FinalAction::Exit));
+            }
+            KeyCode::Enter => {
+                if self.existing_overwrite_selected {
+                    self.final_proceed_selected = true;
+                    self.screen = UiScreen::FinalConfirm;
+                    self.status = "Overwrite confirmed. Use arrows and Enter (or F10) to continue."
+                        .to_string();
+                } else {
+                    return Ok(Some(FinalAction::Exit));
+                }
             }
             _ => {}
         }
@@ -306,6 +331,21 @@ impl App {
     fn handle_final_key(&mut self, code: KeyCode) -> Result<Option<FinalAction>> {
         match code {
             KeyCode::Esc => return Ok(Some(FinalAction::Exit)),
+            KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down | KeyCode::Tab => {
+                self.final_proceed_selected = !self.final_proceed_selected;
+            }
+            KeyCode::Enter => {
+                if !self.final_proceed_selected {
+                    return Ok(Some(FinalAction::Exit));
+                }
+                let cfg = InstallConfig {
+                    disk: self.disks[self.selected_disk].clone(),
+                    boot_size: self.boot_size.clone(),
+                    swap_size: self.swap_size.clone(),
+                    passphrase: self.passphrase.clone(),
+                };
+                return Ok(Some(FinalAction::Install(cfg)));
+            }
             KeyCode::F(10) => {
                 let cfg = InstallConfig {
                     disk: self.disks[self.selected_disk].clone(),
@@ -358,8 +398,13 @@ impl App {
             .split(area);
 
         let title = Paragraph::new("NixOS ZFS Installer")
-            .block(Block::default().borders(Borders::ALL).title("Installer"))
-            .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::LightBlue))
+                    .title("Installer"),
+            )
+            .style(Style::default().fg(Color::LightCyan).add_modifier(Modifier::BOLD));
         f.render_widget(title, chunks[0]);
 
         match self.screen {
@@ -370,7 +415,12 @@ impl App {
         }
 
         let footer = Paragraph::new(self.status.clone())
-            .block(Block::default().borders(Borders::ALL).title("Status"))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Blue))
+                    .title("Status"),
+            )
             .wrap(Wrap { trim: true });
         f.render_widget(footer, chunks[2]);
     }
@@ -388,8 +438,18 @@ impl App {
             })
             .collect();
         let list = List::new(items)
-            .block(Block::default().borders(Borders::ALL).title("Available Disks"))
-            .highlight_style(Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::LightBlue))
+                    .title("Available Disks"),
+            )
+            .highlight_style(
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::LightGreen)
+                    .add_modifier(Modifier::BOLD),
+            )
             .highlight_symbol("> ");
         f.render_stateful_widget(list, area, &mut self.list_state);
     }
@@ -417,21 +477,46 @@ impl App {
             let marker = if active { ">" } else { " " };
             let hint = if secret { " (hidden)" } else { "" };
             lines.push(Line::from(vec![
-                Span::styled(format!("{} {}{}: ", marker, name, hint), Style::default().fg(Color::Green)),
-                Span::raw(value),
+                Span::styled(
+                    format!("{} {}{}: ", marker, name, hint),
+                    Style::default()
+                        .fg(if active { Color::LightYellow } else { Color::Green })
+                        .add_modifier(if active { Modifier::BOLD } else { Modifier::empty() }),
+                ),
+                Span::styled(
+                    value,
+                    Style::default().fg(if active { Color::White } else { Color::Gray }),
+                ),
             ]));
         }
         lines.push(Line::from(""));
-        lines.push(Line::from("Controls: Tab/Shift+Tab move fields, Backspace delete, Enter continue, Esc back"));
+        lines.push(Line::from(
+            "Controls: Tab or arrows move fields, Backspace delete, Enter continue, Esc back",
+        ));
 
         let p = Paragraph::new(lines)
-            .block(Block::default().borders(Borders::ALL).title("Install Settings"))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::LightBlue))
+                    .title("Install Settings"),
+            )
             .wrap(Wrap { trim: true });
         f.render_widget(p, area);
     }
 
     fn draw_existing_confirm(&self, f: &mut Frame<'_>, area: Rect) {
         let disk = &self.disks[self.selected_disk];
+        let overwrite_style = if self.existing_overwrite_selected {
+            Style::default().fg(Color::Black).bg(Color::LightGreen).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Green)
+        };
+        let keep_style = if self.existing_overwrite_selected {
+            Style::default().fg(Color::Gray)
+        } else {
+            Style::default().fg(Color::Black).bg(Color::LightRed).add_modifier(Modifier::BOLD)
+        };
         let mut lines = vec![
             Line::from(vec![Span::styled(
                 "Existing install markers detected on selected disk.",
@@ -440,18 +525,38 @@ impl App {
             Line::from(""),
             Line::from(format!("Disk: {} ({}, {})", disk.path, disk.size, disk.model)),
             Line::from(""),
-            Line::from("Press O to overwrite and continue."),
-            Line::from("Press K or Esc to keep existing setup and exit."),
+            Line::from("Use Left/Right or Up/Down to choose, Enter to confirm."),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("[ Overwrite ]", overwrite_style),
+                Span::raw("   "),
+                Span::styled("[ Keep / Exit ]", keep_style),
+            ]),
         ];
 
         let p = Paragraph::new(lines.split_off(0))
-            .block(Block::default().borders(Borders::ALL).title("Existing Configuration"))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Yellow))
+                    .title("Existing Configuration"),
+            )
             .wrap(Wrap { trim: true });
         f.render_widget(p, area);
     }
 
     fn draw_final_confirm(&self, f: &mut Frame<'_>, area: Rect) {
         let disk = &self.disks[self.selected_disk];
+        let proceed_style = if self.final_proceed_selected {
+            Style::default().fg(Color::Black).bg(Color::LightGreen).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Green)
+        };
+        let cancel_style = if self.final_proceed_selected {
+            Style::default().fg(Color::Gray)
+        } else {
+            Style::default().fg(Color::Black).bg(Color::LightRed).add_modifier(Modifier::BOLD)
+        };
         let mut lines = vec![
             Line::from(vec![
                 Span::styled("WARNING: ", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
@@ -475,12 +580,24 @@ impl App {
         }
 
         lines.push(Line::from(""));
-        lines.push(Line::from("Press F10 to proceed, Esc to cancel."));
+        lines.push(Line::from("Use Left/Right or Up/Down to choose, Enter to confirm."));
+        lines.push(Line::from("F10 is a quick shortcut to proceed."));
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled("[ Proceed ]", proceed_style),
+            Span::raw("   "),
+            Span::styled("[ Cancel ]", cancel_style),
+        ]));
 
         let popup = centered_rect(80, 70, area);
         f.render_widget(Clear, popup);
         let p = Paragraph::new(lines)
-            .block(Block::default().borders(Borders::ALL).title("Final Confirmation"))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::LightRed))
+                    .title("Final Confirmation"),
+            )
             .wrap(Wrap { trim: true });
         f.render_widget(p, popup);
     }
@@ -850,7 +967,7 @@ fn run_installer(cfg: &InstallConfig) -> Result<()> {
     }
 
     let zfs_module = format!(
-        "{{ config, pkgs, ... }}:\n\n{{\n  boot.loader.systemd-boot.enable = true;\n  boot.loader.efi.canTouchEfiVariables = true;\n  boot.loader.grub.enable = pkgs.lib.mkForce false;\n\n  networking.hostId = \"{host_id}\";\n  boot.supportedFilesystems = [ \"zfs\" ];\n\n  swapDevices = pkgs.lib.mkForce [ {{\n    device = \"/dev/disk/by-partuuid/{swap_partuuid}\";\n    randomEncryption.enable = true;\n  }} ];\n}}\n"
+        "{{ config, pkgs, ... }}:\n\n{{\n  boot.loader.systemd-boot.enable = true;\n  boot.loader.efi.canTouchEfiVariables = true;\n  boot.loader.grub.enable = pkgs.lib.mkForce false;\n\n  networking.hostId = \"{host_id}\";\n  boot.supportedFilesystems = [ \"zfs\" ];\n  boot.zfs.devNodes = \"/dev/disk/by-partlabel\";\n\n  swapDevices = pkgs.lib.mkForce [ {{\n    device = \"/dev/disk/by-partuuid/{swap_partuuid}\";\n    randomEncryption.enable = true;\n  }} ];\n}}\n"
     );
     fs::write("/mnt/etc/nixos/zfs.nix", zfs_module)?;
 

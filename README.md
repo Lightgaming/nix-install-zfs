@@ -64,9 +64,9 @@ cargo run
 ## TUI controls
 
 - Disk selection: `Up` / `Down`, `Enter`
-- Form editing: `Tab`, `Shift+Tab`, typing, `Backspace`, `Enter`
-- Existing configuration prompt: `O` (overwrite) or `K` (keep/exit)
-- Final confirmation: `F10` to proceed, `Esc` to cancel
+- Form editing: `Tab` or arrow keys to move fields, typing, `Backspace`, `Enter`
+- Existing configuration prompt: arrow keys + `Enter` (or `O` / `K`)
+- Final confirmation: arrow keys + `Enter`, `F10` quick proceed, `Esc` to cancel
 
 ## After success
 
