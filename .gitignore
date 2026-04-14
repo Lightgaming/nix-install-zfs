@@ -1,0 +1,16 @@
+# Rust build artifacts
+/target/
+
+# Nix build outputs
+/result
+/result-*
+
+# direnv
+/.direnv/
+/.envrc
+
+# Editor and OS noise
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
