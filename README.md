@@ -38,17 +38,17 @@ The installer performs the following high-level steps:
 The wizard provides two ZFS setup modes:
 
 - Recommended defaults:
-   - `ashift=12`
-   - `redundancy=single`
-   - `compression=lz4`
-   - `primarycache=all`
-   - `autotrim=on`
+  - `ashift=12`
+  - `redundancy=single`
+  - `compression=lz4`
+  - `primarycache=all`
+  - `autotrim=on`
 - Advanced mode:
-   - `ashift`: `9..16`
-   - `redundancy`: `single`, `mirror`, `raidz1`, `raidz2`, `raidz3`
-   - `compression`: `lz4`, `zstd`, `gzip`, `zle`, `on`, `off`
-   - `primarycache`: `all`, `metadata`, `none`
-   - `autotrim`: yes/no
+  - `ashift`: `9..16`
+  - `redundancy`: `single`, `mirror`, `raidz1`, `raidz2`, `raidz3`
+  - `compression`: `lz4`, `zstd`, `gzip`, `zle`, `on`, `off`
+  - `primarycache`: `all`, `metadata`, `none`
+  - `autotrim`: yes/no
 
 Note: current installer execution mode supports one target disk only, so only `redundancy=single` is executable right now. Other redundancy levels are shown and explained in Advanced mode, but require multi-disk pool support.
 

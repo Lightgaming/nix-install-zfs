@@ -90,6 +90,8 @@ pub fn run_installer(cfg: &InstallConfig) -> Result<()> {
         format!("primarycache={zfs_primarycache}"),
     ];
 
+    let mut keyfile_guard: Option<NamedTempFile> = None;
+
     if cfg.enable_encryption {
         println!("-> Creating encrypted zpool and datasets");
         let mut keyfile = NamedTempFile::new_in("/tmp")?;
@@ -106,6 +108,9 @@ pub fn run_installer(cfg: &InstallConfig) -> Result<()> {
             "-O".to_string(),
             format!("keylocation=file://{keypath}"),
         ]);
+
+        // Hold tempfile until zpool create has consumed key material.
+        keyfile_guard = Some(keyfile);
     } else {
         println!("-> Creating unencrypted zpool and datasets");
     }
@@ -114,6 +119,7 @@ pub fn run_installer(cfg: &InstallConfig) -> Result<()> {
     zpool_args.push(part_zfs.clone());
     let zpool_arg_refs: Vec<&str> = zpool_args.iter().map(String::as_str).collect();
     run_command("zpool", &zpool_arg_refs)?;
+    drop(keyfile_guard);
     if cfg.enable_encryption {
         run_command("zfs", &["set", "keylocation=prompt", "zroot"])?;
     }
