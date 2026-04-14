@@ -16,6 +16,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 use regex::Regex;
+use serde::de::Deserializer;
 use serde::Deserialize;
 use tempfile::NamedTempFile;
 
@@ -547,17 +548,17 @@ struct LsblkResponse {
 #[derive(Deserialize, Clone)]
 struct LsblkDevice {
     #[serde(default)]
-    path: String,
+    path: Option<String>,
     #[serde(default)]
-    size: String,
+    size: Option<String>,
     #[serde(default)]
-    model: String,
+    model: Option<String>,
     #[serde(rename = "type", default)]
-    dev_type: String,
-    #[serde(default)]
-    rm: Option<u8>,
-    #[serde(default)]
-    ro: Option<u8>,
+    dev_type: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_opt_boolish")]
+    rm: Option<bool>,
+    #[serde(default, deserialize_with = "deserialize_opt_boolish")]
+    ro: Option<bool>,
     #[serde(default)]
     partlabel: Option<String>,
     #[serde(default)]
@@ -576,21 +577,48 @@ fn load_disks() -> Result<Vec<Disk>> {
     let disks = parsed
         .blockdevices
         .into_iter()
-        .filter(|d| d.dev_type == "disk")
-        .filter(|d| d.ro.unwrap_or(0) == 0)
-        .filter(|d| d.rm.unwrap_or(0) == 0)
+        .filter(|d| d.dev_type.as_deref().unwrap_or_default() == "disk")
+        .filter(|d| !d.ro.unwrap_or(false))
+        .filter(|d| !d.rm.unwrap_or(false))
         .map(|d| Disk {
-            path: d.path,
-            size: if d.size.is_empty() { "?".to_string() } else { d.size },
-            model: if d.model.trim().is_empty() {
+            path: d.path.unwrap_or_default(),
+            size: if d.size.as_deref().unwrap_or_default().is_empty() {
+                "?".to_string()
+            } else {
+                d.size.unwrap_or_default()
+            },
+            model: if d.model.as_deref().unwrap_or_default().trim().is_empty() {
                 "(unknown model)".to_string()
             } else {
-                d.model.trim().to_string()
+                d.model.unwrap_or_default().trim().to_string()
             },
         })
+        .filter(|d| !d.path.is_empty())
         .collect();
 
     Ok(disks)
+}
+
+fn deserialize_opt_boolish<'de, D>(deserializer: D) -> std::result::Result<Option<bool>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    let parsed = match value {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::Bool(b)) => Some(b),
+        Some(serde_json::Value::Number(n)) => Some(n.as_u64().unwrap_or(0) != 0),
+        Some(serde_json::Value::String(s)) => {
+            let lowered = s.trim().to_ascii_lowercase();
+            match lowered.as_str() {
+                "1" | "true" | "yes" => Some(true),
+                "0" | "false" | "no" | "" => Some(false),
+                _ => Some(false),
+            }
+        }
+        _ => Some(false),
+    };
+    Ok(parsed)
 }
 
 fn has_existing_configuration(disk: &str) -> Result<bool> {
