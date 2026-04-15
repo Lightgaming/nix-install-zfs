@@ -22,6 +22,7 @@ pub struct InstallConfig {
     pub root_password: String,
     pub install_networkmanager: bool,
     pub enable_git: bool,
+    pub enable_ssh: bool,
     pub zfs_use_recommended: bool,
     pub zfs_ashift: String,
     pub zfs_redundancy: String,

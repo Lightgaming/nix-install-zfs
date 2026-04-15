@@ -171,9 +171,10 @@ pub fn run_installer(cfg: &InstallConfig) -> Result<()> {
     let user_groups = if cfg.enable_sudo { "[ \"wheel\" ]" } else { "[ ]" };
     let networkmanager_value = if cfg.install_networkmanager { "true" } else { "false" };
     let git_value = if cfg.enable_git { "true" } else { "false" };
+    let ssh_value = if cfg.enable_ssh { "true" } else { "false" };
 
     let setup_module = format!(
-        "{{ config, pkgs, ... }}:\n\n{{\n  networking.hostName = \"{escaped_hostname}\";\n  time.timeZone = \"{escaped_timezone}\";\n  services.xserver.xkb.layout = \"{escaped_keyboard_layout}\";\n  console.keyMap = \"{escaped_keyboard_layout}\";\n{flakes_snippet}  networking.networkmanager.enable = {networkmanager_value};\n  programs.git.enable = {git_value};\n\n  users.users.\"{escaped_username}\" = {{\n    isNormalUser = true;\n    extraGroups = {user_groups};\n    initialPassword = \"{escaped_user_password}\";\n  }};\n\n  users.users.root.initialPassword = \"{escaped_root_password}\";\n}}\n"
+        "{{ config, pkgs, ... }}:\n\n{{\n  networking.hostName = \"{escaped_hostname}\";\n  time.timeZone = \"{escaped_timezone}\";\n  services.xserver.xkb.layout = \"{escaped_keyboard_layout}\";\n  console.keyMap = \"{escaped_keyboard_layout}\";\n{flakes_snippet}  networking.networkmanager.enable = {networkmanager_value};\n  programs.git.enable = {git_value};\n  services.openssh.enable = {ssh_value};\n\n  users.users.\"{escaped_username}\" = {{\n    isNormalUser = true;\n    extraGroups = {user_groups};\n    initialPassword = \"{escaped_user_password}\";\n  }};\n\n  users.users.root.initialPassword = \"{escaped_root_password}\";\n}}\n"
     );
     fs::write("/mnt/etc/nixos/system-setup.nix", setup_module)?;
 

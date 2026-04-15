@@ -11,7 +11,7 @@ It replaces the old interactive shell flow with a safer TUI that helps reduce ac
 - ZFS tuning wizard with Recommended defaults or Advanced mode
 - guided prompts for system settings (hostname, timezone, keyboard layout)
 - guided prompts for account setup (user, user password, sudo access, root password)
-- guided prompts for optional components (NetworkManager, Git)
+- guided prompts for optional components (NetworkManager, Git, SSH)
 - warnings for mounted/system disks
 - staged confirmations before destructive actions
 
@@ -146,7 +146,7 @@ cargo run
 - Disk selection: `Up` / `Down`, `Enter`
 - Wizard steps: each page asks one value at a time (`Boot size`, `Swap size`, `Encryption`, `Passphrase`, `Flakes`)
 - ZFS pages include `Recommended vs Advanced` and, in advanced mode, `ashift`, `redundancy`, `compression`, `primarycache`, and `autotrim`
-- Additional guided pages configure hostname, timezone, keyboard layout, users, root password, network, and git
+- Additional guided pages configure hostname, timezone, keyboard layout, users, root password, network, git, and ssh
 - Value entry pages: typing, `Backspace`, `Enter` next, `Esc` back
 - Yes/No pages (encryption, flakes): arrow keys + `Enter`
 - Existing configuration prompt: arrow keys + `Enter` (or `O` / `K`)

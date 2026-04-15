@@ -70,6 +70,10 @@ fn run() -> Result<()> {
                 if cfg.enable_git { "enabled" } else { "disabled" }
             );
             println!(
+                "SSH:         {}",
+                if cfg.enable_ssh { "enabled" } else { "disabled" }
+            );
+            println!(
                 "ZFS profile: {}",
                 if cfg.zfs_use_recommended {
                     "recommended"

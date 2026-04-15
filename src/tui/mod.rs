@@ -48,7 +48,7 @@ enum UiScreen {
     RootPassword,
     RootPasswordConfirm,
     NetworkManagerChoice,
-    GitChoice,
+    FeatureToggles,
     ExistingConfirm,
     FinalConfirm,
 }
@@ -75,6 +75,8 @@ pub struct App {
     root_password_confirm: String,
     install_networkmanager: bool,
     enable_git: bool,
+    enable_ssh: bool,
+    feature_toggle_selected: usize,
     zfs_use_recommended: bool,
     zfs_ashift: String,
     zfs_redundancy: String,
@@ -115,6 +117,8 @@ impl App {
             root_password_confirm: String::new(),
             install_networkmanager: true,
             enable_git: true,
+            enable_ssh: false,
+            feature_toggle_selected: 0,
             zfs_use_recommended: true,
             zfs_ashift: "12".to_string(),
             zfs_redundancy: "single".to_string(),
@@ -173,7 +177,7 @@ impl App {
             UiScreen::RootPassword => self.handle_root_password_key(code),
             UiScreen::RootPasswordConfirm => self.handle_root_password_confirm_key(code),
             UiScreen::NetworkManagerChoice => self.handle_networkmanager_key(code),
-            UiScreen::GitChoice => self.handle_git_key(code),
+            UiScreen::FeatureToggles => self.handle_feature_toggles_key(code),
             UiScreen::ExistingConfirm => self.handle_existing_key(code),
             UiScreen::FinalConfirm => self.handle_final_key(code),
         }
@@ -807,27 +811,71 @@ impl App {
             }
             KeyCode::Enter => {
                 self.install_networkmanager = self.choice_yes_selected;
-                self.choice_yes_selected = self.enable_git;
-                self.screen = UiScreen::GitChoice;
-                self.status = "Next: choose whether to enable git.".to_string();
+                self.feature_toggle_selected = 0;
+                self.screen = UiScreen::FeatureToggles;
+                self.status =
+                    "Next: use Up/Down to pick Git or SSH, toggle with Enter/Space, then Continue."
+                        .to_string();
             }
             _ => {}
         }
         Ok(None)
     }
 
-    fn handle_git_key(&mut self, code: KeyCode) -> Result<Option<FinalAction>> {
+    fn handle_feature_toggles_key(&mut self, code: KeyCode) -> Result<Option<FinalAction>> {
         match code {
             KeyCode::Esc => {
                 self.choice_yes_selected = self.install_networkmanager;
                 self.screen = UiScreen::NetworkManagerChoice;
                 self.status = "Next: choose whether to enable NetworkManager.".to_string();
             }
-            KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down | KeyCode::Tab => {
-                self.choice_yes_selected = !self.choice_yes_selected;
+            KeyCode::Up => {
+                if self.feature_toggle_selected > 0 {
+                    self.feature_toggle_selected -= 1;
+                }
+            }
+            KeyCode::Down => {
+                if self.feature_toggle_selected < 2 {
+                    self.feature_toggle_selected += 1;
+                }
+            }
+            KeyCode::Left | KeyCode::Right | KeyCode::Tab | KeyCode::Char(' ') => {
+                match self.feature_toggle_selected {
+                    0 => self.enable_git = !self.enable_git,
+                    1 => self.enable_ssh = !self.enable_ssh,
+                    _ => {}
+                }
             }
             KeyCode::Enter => {
-                self.enable_git = self.choice_yes_selected;
+                match self.feature_toggle_selected {
+                    0 => {
+                        self.enable_git = !self.enable_git;
+                    }
+                    1 => {
+                        self.enable_ssh = !self.enable_ssh;
+                    }
+                    _ => {
+                        self.warnings = collect_disk_warnings(&self.disks[self.selected_disk].path)?;
+                        self.existing_found =
+                            has_existing_configuration(&self.disks[self.selected_disk].path)?;
+                        if self.existing_found {
+                            self.existing_overwrite_selected = true;
+                            self.screen = UiScreen::ExistingConfirm;
+                            self.status =
+                                "Existing install markers detected. Use arrows, then Enter to choose."
+                                    .to_string();
+                        } else {
+                            self.final_proceed_selected = true;
+                            self.screen = UiScreen::FinalConfirm;
+                            self.status =
+                                "Final confirmation. Use arrows and Enter (or F10) to continue."
+                                    .to_string();
+                        }
+                    }
+                }
+            }
+            KeyCode::Char('c') | KeyCode::Char('C') => {
+                self.feature_toggle_selected = 2;
                 self.warnings = collect_disk_warnings(&self.disks[self.selected_disk].path)?;
                 self.existing_found = has_existing_configuration(&self.disks[self.selected_disk].path)?;
                 if self.existing_found {
@@ -919,6 +967,7 @@ impl App {
             root_password: self.root_password.clone(),
             install_networkmanager: self.install_networkmanager,
             enable_git: self.enable_git,
+            enable_ssh: self.enable_ssh,
             zfs_use_recommended: self.zfs_use_recommended,
             zfs_ashift: self.zfs_ashift.clone(),
             zfs_redundancy: self.zfs_redundancy.clone(),
@@ -1121,13 +1170,7 @@ impl App {
                 "Enable NetworkManager?",
                 self.choice_yes_selected,
             ),
-            UiScreen::GitChoice => self.draw_yes_no_step(
-                f,
-                chunks[1],
-                "Programs",
-                "Enable Git in programs.git?",
-                self.choice_yes_selected,
-            ),
+            UiScreen::FeatureToggles => self.draw_feature_toggles(f, chunks[1]),
             UiScreen::ExistingConfirm => self.draw_existing_confirm(f, chunks[1]),
             UiScreen::FinalConfirm => self.draw_final_confirm(f, chunks[1]),
         }
@@ -1259,6 +1302,68 @@ impl App {
         f.render_widget(p, area);
     }
 
+    fn draw_feature_toggles(&self, f: &mut Frame<'_>, area: Rect) {
+        let selected_style = Style::default()
+            .fg(Color::Black)
+            .bg(Color::LightGreen)
+            .add_modifier(Modifier::BOLD);
+
+        let normal_style = Style::default().fg(Color::White);
+
+        let rows = [
+            format!(
+                "Git: {}",
+                if self.enable_git { "[ON]" } else { "[OFF]" }
+            ),
+            format!(
+                "SSH: {}",
+                if self.enable_ssh { "[ON]" } else { "[OFF]" }
+            ),
+            "Continue".to_string(),
+        ];
+
+        let lines: Vec<Line> = rows
+            .iter()
+            .enumerate()
+            .map(|(idx, row)| {
+                let marker = if idx == self.feature_toggle_selected {
+                    "> "
+                } else {
+                    "  "
+                };
+                let style = if idx == self.feature_toggle_selected {
+                    selected_style
+                } else {
+                    normal_style
+                };
+                Line::from(Span::styled(format!("{marker}{row}"), style))
+            })
+            .collect();
+
+        let mut content = vec![
+            Line::from(Span::styled(
+                "Toggle optional features before continuing.",
+                Style::default().fg(Color::LightYellow),
+            )),
+            Line::from(""),
+        ];
+        content.extend(lines);
+        content.push(Line::from(""));
+        content.push(Line::from(
+            "Use Up/Down to navigate. Enter or Space toggles Git/SSH. Select Continue and Enter to proceed.",
+        ));
+
+        let p = Paragraph::new(content)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::LightBlue))
+                    .title("Programs"),
+            )
+            .wrap(Wrap { trim: true });
+        f.render_widget(p, area);
+    }
+
     fn draw_existing_confirm(&self, f: &mut Frame<'_>, area: Rect) {
         let disk = &self.disks[self.selected_disk];
         let overwrite_style = if self.existing_overwrite_selected {
@@ -1370,6 +1475,10 @@ impl App {
             Line::from(format!(
                 "Git: {}",
                 if self.enable_git { "enabled" } else { "disabled" }
+            )),
+            Line::from(format!(
+                "SSH: {}",
+                if self.enable_ssh { "enabled" } else { "disabled" }
             )),
             Line::from(format!(
                 "ZFS profile: {}",
